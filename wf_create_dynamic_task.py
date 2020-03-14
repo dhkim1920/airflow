@@ -2,6 +2,7 @@ from datetime import timedelta
 
 from airflow.operators.bash_operator import BashOperator
 from airflow.models import DAG
+from datetime import datetime
 
 
 def create_bash_task(task_index):

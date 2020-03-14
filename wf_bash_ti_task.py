@@ -3,6 +3,7 @@ from datetime import timedelta
 from airflow.operators.bash_operator import BashOperator
 from airflow.models import DAG
 from airflow.operators.python_operator import PythonOperator
+from datetime import datetime
 
 
 def init(**kwargs):
@@ -35,7 +36,7 @@ default_dag_args = {
     'email_on_retry': False,
 }
 
-dag = DAG('wf_create_dynamic_task',
+dag = DAG('wf_bash_ti_task',
           start_date=datetime(2020, 2, 18),
           default_args=default_dag_args,
           schedule_interval=None,
