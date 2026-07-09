@@ -23,6 +23,7 @@ import re
 from datetime import time, timedelta
 from unittest import mock
 
+import pendulum
 import pytest
 from sqlalchemy import select
 
@@ -36,6 +37,7 @@ from airflow.providers.common.compat.sdk import (
     AirflowSensorTimeout,
     AirflowSkipException,
     TaskDeferred,
+    timezone,
 )
 from airflow.providers.standard.exceptions import (
     DuplicateStateError,
@@ -118,6 +120,27 @@ EXTERNAL_DAG_ID = "child_dag"  # DAG the external task sensor is waiting on
 EXTERNAL_TASK_ID = "child_task"  # Task the external task sensor is waiting on
 EXTERNAL_ID_AND_IDS_PROVIDE_ERROR = "Only one of `external_task_id` or `external_task_ids` may be provided to ExternalTaskSensor; use external_task_id or external_task_ids or external_task_group_id."
 EXTERNAL_IDS_AND_TASK_GROUP_ID_PROVIDE_ERROR = "Only one of `external_task_group_id` or `external_task_ids` may be provided to ExternalTaskSensor; use external_task_id or external_task_ids or external_task_group_id."
+
+
+def _expected_poke_date(dttm=DEFAULT_DATE):
+    return (
+        f"logical_date {ExternalTaskSensor._serialize_dttm_filter([dttm])} "
+        f"(shown in default timezone: "
+        f"{ExternalTaskSensor._serialize_dttm_filter_in_default_timezone([dttm])})"
+    )
+
+
+@mock.patch(
+    "airflow.providers.standard.sensors.external_task.settings.TIMEZONE",
+    pendulum.timezone("Asia/Seoul"),
+)
+def test_serialize_dttm_filter_in_default_timezone():
+    logical_date = datetime(2026, 7, 6, 21, 0, tzinfo=timezone.utc)
+
+    assert (
+        ExternalTaskSensor._serialize_dttm_filter_in_default_timezone([logical_date])
+        == "2026-07-07T06:00:00+09:00"
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -363,7 +386,7 @@ class TestExternalTaskSensorV2:
             with pytest.raises(ExternalTaskFailedError, match=error_message):
                 op.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE, ignore_ti_state=True)
         assert (
-            f"Poking for tasks ['{TEST_TASK_ID}'] in dag {TEST_DAG_ID} on {DEFAULT_DATE.isoformat()} ... "
+            f"Poking for tasks ['{TEST_TASK_ID}'] in dag {TEST_DAG_ID} on {_expected_poke_date()} ... "
         ) in caplog.messages
 
     def test_external_task_sensor_soft_fail_failed_states_as_skipped(self):
@@ -421,7 +444,7 @@ class TestExternalTaskSensorV2:
             caplog.clear()
             op.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE, ignore_ti_state=True)
             assert (
-                f"Poking for tasks ['{TEST_TASK_ID}'] in dag {TEST_DAG_ID} on {DEFAULT_DATE.isoformat()} ... "
+                f"Poking for tasks ['{TEST_TASK_ID}'] in dag {TEST_DAG_ID} on {_expected_poke_date()} ... "
             ) in caplog.messages
 
     def test_external_task_sensor_external_task_ids_param(self, caplog):
@@ -439,7 +462,7 @@ class TestExternalTaskSensorV2:
             caplog.clear()
             op.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE, ignore_ti_state=True)
             assert (
-                f"Poking for tasks ['{TEST_TASK_ID}'] in dag {TEST_DAG_ID} on {DEFAULT_DATE.isoformat()} ... "
+                f"Poking for tasks ['{TEST_TASK_ID}'] in dag {TEST_DAG_ID} on {_expected_poke_date()} ... "
             ) in caplog.messages
 
     def test_external_task_sensor_failed_states_as_success_mulitple_task_ids(self, caplog):
@@ -463,7 +486,7 @@ class TestExternalTaskSensorV2:
                 op.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE, ignore_ti_state=True)
         assert (
             f"Poking for tasks ['{TEST_TASK_ID}', '{TEST_TASK_ID_ALTERNATE}'] "
-            f"in dag unit_test_dag on {DEFAULT_DATE.isoformat()} ... "
+            f"in dag unit_test_dag on {_expected_poke_date()} ... "
         ) in caplog.messages
 
     def test_external_dag_sensor(self, dag_maker):
@@ -489,7 +512,7 @@ class TestExternalTaskSensorV2:
             dag=self.dag,
         )
         op.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE, ignore_ti_state=True)
-        assert (f"Poking for DAG 'other_dag' on {DEFAULT_DATE.isoformat()} ... ") in caplog.messages
+        assert (f"Poking for DAG 'other_dag' on {_expected_poke_date()} ... ") in caplog.messages
 
     def test_external_dag_sensor_soft_fail_as_skipped(self, dag_maker, session):
         with dag_maker("other_dag", default_args=self.args, end_date=DEFAULT_DATE, schedule="@once"):
@@ -1294,6 +1317,27 @@ class TestExternalTaskSensorV3:
             task_ids=["task1", "task2"],
         )
         assert op.external_dates_filter == DEFAULT_DATE.isoformat()
+
+    @mock.patch(
+        "airflow.providers.standard.sensors.external_task.settings.TIMEZONE",
+        pendulum.timezone("Asia/Seoul"),
+    )
+    def test_external_dag_sensor_log_shows_default_timezone(self, caplog, dag_maker):
+        self.context["ti"].get_dr_count.return_value = 1
+        with dag_maker("test_dag_child"):
+            op = ExternalTaskSensor(
+                task_id="test_external_dag_sensor_check",
+                external_dag_id="test_dag_parent",
+            )
+
+        with caplog.at_level(logging.INFO, logger=op.log.name):
+            caplog.clear()
+            assert op.poke(self.context) is True
+
+        assert (
+            "Poking for DAG 'test_dag_parent' on logical_date 2015-01-01T00:00:00+00:00 "
+            "(shown in default timezone: 2015-01-01T09:00:00+09:00) ... "
+        ) in caplog.messages
 
     @pytest.mark.execution_timeout(10)
     def test_external_task_sensor_skipped_states(self, dag_maker):
