@@ -1319,6 +1319,7 @@ class TestDagFileProcessorManager:
 
         mock_persist.assert_called_once_with(
             bundle_name="testing",
+            bundle_path=TEST_DAGS_FOLDER,
             bundle_version="v1",
             version_data=None,
             parsing_result=processor.parsing_result,

@@ -768,6 +768,7 @@ def test_persist_parsing_result_calls_update_db():
         DagFileProcessorManager.persist_parsing_result(
             manager,
             bundle_name="test-bundle",
+            bundle_path=pathlib.Path("/bundle"),
             bundle_version="v1",
             version_data=None,
             parsing_result=parsing_result,
@@ -779,6 +780,7 @@ def test_persist_parsing_result_calls_update_db():
     mock_update.assert_called_once()
     call_kwargs = mock_update.call_args.kwargs
     assert call_kwargs["bundle_name"] == "test-bundle"
+    assert call_kwargs["bundle_path"] == pathlib.Path("/bundle")
     assert call_kwargs["bundle_version"] == "v1"
     assert call_kwargs["parse_duration"] == 1.5
     assert call_kwargs["session"] is session

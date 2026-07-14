@@ -1236,6 +1236,7 @@ class DagFileProcessorManager(LoggingMixin):
             try:
                 self.persist_parsing_result(
                     bundle_name=file.bundle_name,
+                    bundle_path=file.bundle_path,
                     bundle_version=self._bundle_versions[file.bundle_name],
                     version_data=self._bundle_version_data.get(file.bundle_name),
                     parsing_result=proc.parsing_result,
@@ -1268,6 +1269,7 @@ class DagFileProcessorManager(LoggingMixin):
         self,
         *,
         bundle_name: str,
+        bundle_path: Path | None,
         bundle_version: str | None,
         version_data: dict | None,
         parsing_result: DagFileParsingResult,
@@ -1295,6 +1297,7 @@ class DagFileProcessorManager(LoggingMixin):
 
         update_dag_parsing_results_in_db(
             bundle_name=bundle_name,
+            bundle_path=bundle_path,
             bundle_version=bundle_version,
             version_data=version_data,
             dags=parsing_result.serialized_dags,

@@ -71,6 +71,7 @@ from airflow.utils.types import DagRunType
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterable, Iterator
+    from pathlib import Path
 
     from sqlalchemy.orm import Session
     from sqlalchemy.sql import Select
@@ -397,8 +398,11 @@ def _update_import_errors(
     bundle_name: str,
     import_errors: dict[tuple[str, str], str],
     session: Session,
+    bundle_path: Path | None = None,
 ):
     from airflow.listeners.listener import get_listener_manager
+
+    listener_manager = get_listener_manager()
 
     # Check existing import errors BEFORE deleting, so we can determine if we should update or create
     existing_import_error_files = set(
@@ -433,21 +437,21 @@ def _update_import_errors(
                     stacktrace=stacktrace,
                 ),
             )
-            # sending notification when an existing dag import error occurs
-            try:
-                # todo: make listener accept bundle_name and relative_filename
-                import_error = session.scalar(
-                    select(ParseImportError).where(
-                        ParseImportError.bundle_name == bundle_name_,
-                        ParseImportError.filename == relative_fileloc,
+            if listener_manager.has_listeners:
+                try:
+                    import_error = session.scalar(
+                        select(ParseImportError).where(
+                            ParseImportError.bundle_name == bundle_name_,
+                            ParseImportError.filename == relative_fileloc,
+                        )
                     )
-                )
-                if import_error is not None:
-                    get_listener_manager().hook.on_existing_dag_import_error(
-                        filename=import_error.full_file_path(), stacktrace=stacktrace
-                    )
-            except Exception:
-                log.exception("error calling listener")
+                    if import_error is not None:
+                        listener_manager.hook.on_existing_dag_import_error(
+                            filename=_get_import_error_filename(import_error, bundle_path),
+                            stacktrace=stacktrace,
+                        )
+                except Exception:
+                    log.exception("error calling listener")
         else:
             import_error = ParseImportError(
                 filename=relative_fileloc,
@@ -456,13 +460,14 @@ def _update_import_errors(
                 stacktrace=stacktrace,
             )
             session.add(import_error)
-            # sending notification when a new dag import error occurs
-            try:
-                get_listener_manager().hook.on_new_dag_import_error(
-                    filename=import_error.full_file_path(), stacktrace=stacktrace
-                )
-            except Exception:
-                log.exception("error calling listener")
+            if listener_manager.has_listeners:
+                try:
+                    listener_manager.hook.on_new_dag_import_error(
+                        filename=_get_import_error_filename(import_error, bundle_path),
+                        stacktrace=stacktrace,
+                    )
+                except Exception:
+                    log.exception("error calling listener")
         session.execute(
             update(DagModel)
             .where(
@@ -478,6 +483,14 @@ def _update_import_errors(
         )
 
 
+def _get_import_error_filename(import_error: ParseImportError, bundle_path: Path | None) -> str:
+    if bundle_path is None:
+        return import_error.full_file_path()
+    if import_error.filename is None:
+        raise ValueError("filename must not be None")
+    return str(bundle_path / import_error.filename)
+
+
 def update_dag_parsing_results_in_db(
     bundle_name: str,
     bundle_version: str | None,
@@ -488,6 +501,7 @@ def update_dag_parsing_results_in_db(
     session: Session,
     *,
     version_data: dict | None = None,
+    bundle_path: Path | None = None,
     warning_types: tuple[DagWarningType, ...] = (
         DagWarningType.DUPLICATE_DAG_ID,
         DagWarningType.NONEXISTENT_POOL,
@@ -571,6 +585,7 @@ def update_dag_parsing_results_in_db(
             bundle_name=bundle_name,
             import_errors=import_errors,
             session=session,
+            bundle_path=bundle_path,
         )
     except Exception:
         log.exception("Error logging import errors!")

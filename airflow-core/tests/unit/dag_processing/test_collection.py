@@ -22,6 +22,7 @@ import logging
 import warnings
 from collections.abc import Generator
 from datetime import timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest import mock
 from unittest.mock import patch
@@ -39,6 +40,7 @@ from airflow.dag_processing.collection import (
     _get_latest_runs_stmt,
     _get_latest_runs_stmt_partitioned,
     _update_dag_tags,
+    _update_import_errors,
     update_dag_parsing_results_in_db,
 )
 from airflow.exceptions import SerializationError
@@ -904,6 +906,66 @@ class TestUpdateDagParsingResults:
         assert len(dag_import_error_listener.new) == 1
         assert len(dag_import_error_listener.existing) == 0
         assert dag_import_error_listener.new["abc.py"] == import_error.stacktrace
+
+    @patch.object(ParseImportError, "full_file_path")
+    @pytest.mark.usefixtures("clean_db")
+    def test_import_error_persisted_without_listener(self, mock_full_file_path, session, testing_dag_bundle):
+        _update_import_errors(
+            files_parsed={("testing", "abc.py")},
+            bundle_name="testing",
+            import_errors={("testing", "abc.py"): "AnImportError"},
+            session=session,
+        )
+        session.flush()
+
+        mock_full_file_path.assert_not_called()
+        import_error = session.scalars(select(ParseImportError)).one()
+        assert import_error.bundle_name == "testing"
+        assert import_error.filename == "abc.py"
+        assert import_error.stacktrace == "AnImportError"
+
+    @patch.object(ParseImportError, "full_file_path")
+    @pytest.mark.parametrize("is_existing", [False, True])
+    @pytest.mark.usefixtures("clean_db")
+    def test_listener_does_not_resolve_bundle_inside_parsing_transaction(
+        self,
+        mock_full_file_path,
+        is_existing,
+        session,
+        dag_import_error_listener,
+        testing_dag_bundle,
+    ):
+        if is_existing:
+            session.add(
+                ParseImportError(
+                    filename="abc.py",
+                    bundle_name="testing",
+                    timestamp=tz.utcnow(),
+                    stacktrace="OldImportError",
+                )
+            )
+            session.commit()
+
+        def rollback_parsing_transaction():
+            session.rollback()
+            return "/bundle/abc.py"
+
+        mock_full_file_path.side_effect = rollback_parsing_transaction
+
+        _update_import_errors(
+            files_parsed={("testing", "abc.py")},
+            bundle_name="testing",
+            import_errors={("testing", "abc.py"): "NewImportError"},
+            session=session,
+            bundle_path=Path("/bundle"),
+        )
+        session.flush()
+
+        mock_full_file_path.assert_not_called()
+        import_error = session.scalars(select(ParseImportError)).one()
+        assert import_error.stacktrace == "NewImportError"
+        notifications = dag_import_error_listener.existing if is_existing else dag_import_error_listener.new
+        assert notifications == {"/bundle/abc.py": "NewImportError"}
 
     @patch.object(ParseImportError, "full_file_path")
     @mark_fab_auth_manager_test
