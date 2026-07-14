@@ -908,7 +908,7 @@ class TestUpdateDagParsingResults:
         assert dag_import_error_listener.new["abc.py"] == import_error.stacktrace
 
     @patch.object(ParseImportError, "full_file_path")
-    @pytest.mark.usefixtures("clean_db")
+    @pytest.mark.usefixtures("clean_db", "listener_manager")
     def test_import_error_persisted_without_listener(self, mock_full_file_path, session, testing_dag_bundle):
         _update_import_errors(
             files_parsed={("testing", "abc.py")},
